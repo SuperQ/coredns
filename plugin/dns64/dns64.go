@@ -27,13 +27,13 @@ type DNS64 struct {
 }
 
 // ServeDNS implements the plugin.Handler interface.
-func (d DNS64) ServeDNS(ctx context.Context, w dns.ResponseWriter, r *dns.Msg) (int, error) {
-	hijackedWriter := &ResponseWriter{w, d, ctx, r}
-	return d.Next.ServeDNS(ctx, hijackedWriter, r)
+func (dns64 DNS64) ServeDNS(ctx context.Context, w dns.ResponseWriter, r *dns.Msg) (int, error) {
+	hijackedWriter := &ResponseWriter{w, dns64, ctx, r}
+	return dns64.Next.ServeDNS(ctx, hijackedWriter, r)
 }
 
 // Name implements the Handler interface.
-func (d DNS64) Name() string { return "dns64" }
+func (dns64 DNS64) Name() string { return "dns64" }
 
 // ResponseWriter is a response writer that implements DNS64, when an AAAA question returns
 // NODATA, it will try and fetch any A records and synthesize the AAAA records on the fly.
