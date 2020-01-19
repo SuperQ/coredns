@@ -30,15 +30,7 @@ func TestSetupDns64(t *testing.T) {
 			"64:ff9b::/96",
 		},
 		{
-			`dns64 {
-				translateAll
-			}`,
-			false,
-			"64:ff9b::/96",
-		},
-		{
-			`dns64 {
-			}`,
+			`dns64`,
 			false,
 			"64:ff9b::/96",
 		},
@@ -76,12 +68,6 @@ func TestSetupDns64(t *testing.T) {
 			}`,
 			true,
 			"8.8.9.9/24",
-		},
-		{
-			`dns64 {
-			}`,
-			false,
-			"64:ff9b::/96",
 		},
 		{
 			`dns64 {
