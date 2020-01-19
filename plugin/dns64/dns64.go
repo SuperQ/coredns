@@ -10,22 +10,19 @@ import (
 	"time"
 
 	"github.com/coredns/coredns/plugin"
-	"github.com/coredns/coredns/plugin/pkg/nonwriter"
 	"github.com/coredns/coredns/plugin/pkg/response"
 	"github.com/coredns/coredns/plugin/pkg/upstream"
 	"github.com/coredns/coredns/request"
-	"github.com/coredns/proxy"
 
 	"github.com/miekg/dns"
 )
 
 // DNS64 performs DNS64.
 type DNS64 struct {
-	*proxy.Proxy
-	NativeUpstream *upstream.Upstream
-	Next           plugin.Handler
-	Prefix         *net.IPNet
-	TranslateAll   bool // Not comply with 5.1.1
+	Next         plugin.Handler
+	Prefix       *net.IPNet
+	TranslateAll bool // Not comply with 5.1.1
+	Upstream     *upstream.Upstream
 }
 
 // ServeDNS implements the plugin.Handler interface.
@@ -77,19 +74,7 @@ func (r *ResponseWriter) WriteMsg(res *dns.Msg) error {
 	}
 
 	// Perform Lookup
-	var replacement *dns.Msg
-	var err error
-	if len(*r.Upstreams) > 0 {
-		// Use Proxy to lookup
-		req := new(dns.Msg)
-		req.SetQuestion(state.Name(), dns.TypeA)
-		nw := nonwriter.New(state.W)
-		_, err = r.Proxy.ServeDNS(r.ctx, nw, req)
-		replacement = nw.Msg
-	} else {
-		// Use NativeUpstream to lookup
-		replacement, err = r.NativeUpstream.Lookup(r.ctx, state, state.Name(), dns.TypeA)
-	}
+	replacement, err := r.Upstream.Lookup(r.ctx, state, state.Name(), dns.TypeA)
 	if err != nil {
 		return err
 	}

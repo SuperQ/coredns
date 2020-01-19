@@ -87,8 +87,6 @@ github.com/cockroachdb/datadriven v0.0.0-20190809214429-80d97fb3cbaa h1:OaNxuTZr
 github.com/cockroachdb/datadriven v0.0.0-20190809214429-80d97fb3cbaa/go.mod h1:zn76sxSg3SzpJ0PPJaLDCu+Bu0Lg3sKTORVIj19EIF8=
 github.com/coredns/federation v0.0.0-20190818181423-e032b096babe h1:ND08lR/TclI9W4dScCwdRESOacCCdF3FkuB5pBIOv1U=
 github.com/coredns/federation v0.0.0-20190818181423-e032b096babe/go.mod h1:MoqTEFX8GlnKkyq8eBCF94VzkNAOgjdlCJ+Pz/oCLPk=
-github.com/coredns/proxy v0.0.0-20191129143419-f0a08b13f568 h1:n3c1hDhcua5FJ0fTXoCYfNY4fijUBoed9d1+SB1HwO4=
-github.com/coredns/proxy v0.0.0-20191129143419-f0a08b13f568/go.mod h1:BXx1AhWPTL4TJqe70SRiT1MT41j8yWJGU6kEInPiDAA=
 github.com/coreos/go-semver v0.2.0 h1:3Jm3tLmsgAYcjC+4Up7hJrFBPr+n7rAqYeSw/SZazuY=
 github.com/coreos/go-semver v0.2.0/go.mod h1:nnelYz7RCh+5ahJtPPxZlU+153eP4D4r3EedlOD2RNk=
 github.com/coreos/go-systemd v0.0.0-20180511133405-39ca1b05acc7/go.mod h1:F5haX7vjVVG0kc13fIWeqUViNPyEJxv/OmvnBo0Yme4=

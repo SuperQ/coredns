@@ -32,14 +32,12 @@ func TestSetupDns64(t *testing.T) {
 		{
 			`dns64 {
 				translateAll
-				proxy . 8.8.8.8
 			}`,
 			false,
 			"64:ff9b::/96",
 		},
 		{
 			`dns64 {
-				proxy . 8.8.8.8
 			}`,
 			false,
 			"64:ff9b::/96",
@@ -81,22 +79,13 @@ func TestSetupDns64(t *testing.T) {
 		},
 		{
 			`dns64 {
-				proxy . 8.8.8.8 8.8.4.4
 			}`,
 			false,
 			"64:ff9b::/96",
 		},
 		{
 			`dns64 {
-				proxy . some_not_useable_domain
-			}`,
-			true,
-			"64:ff9b::/96",
-		},
-		{
-			`dns64 {
 				prefix 64:ff9b::/96
-				proxy . 8.8.8.8
 			}`,
 			false,
 			"64:ff9b::/96",
@@ -104,7 +93,6 @@ func TestSetupDns64(t *testing.T) {
 		{
 			`dns64 {
 				prefix 2002:ac12:b083::/96
-				proxy . 8.8.8.8
 			}`,
 			false,
 			"2002:ac12:b083::/96",
@@ -112,7 +100,6 @@ func TestSetupDns64(t *testing.T) {
 		{
 			`dns64 {
 				prefix 2002:c0a8:a88a::/48
-				proxy . 8.8.8.8
 			}`,
 			false,
 			"2002:c0a8:a88a::/48",
@@ -120,7 +107,6 @@ func TestSetupDns64(t *testing.T) {
 		{
 			`dns64 foobar {
 				prefix 64:ff9b::/96
-				proxy . 8.8.8.8
 			}`,
 			true,
 			"64:ff9b::/96",

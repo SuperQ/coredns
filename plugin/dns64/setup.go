@@ -3,8 +3,6 @@ package dns64
 import (
 	"net"
 
-	"github.com/coredns/proxy"
-
 	"github.com/coredns/coredns/core/dnsserver"
 	"github.com/coredns/coredns/plugin"
 	clog "github.com/coredns/coredns/plugin/pkg/log"
@@ -29,24 +27,10 @@ func setup(c *caddy.Controller) error {
 		return plugin.Error("dns64", err)
 	}
 
-	t := dnsserver.GetConfig(c).Handler("trace")
-	dns64.Trace = t
 	dnsserver.GetConfig(c).AddPlugin(func(next plugin.Handler) plugin.Handler {
 		dns64.Next = next
 		return dns64
 	})
-
-	for i := range *dns64.Upstreams {
-		u := (*dns64.Upstreams)[i]
-		c.OnStartup(func() error {
-			return u.Exchanger().OnStartup(dns64.Proxy)
-		})
-		c.OnShutdown(func() error {
-			return u.Exchanger().OnShutdown(dns64.Proxy)
-		})
-		// Register shutdown handlers.
-		c.OnShutdown(u.Stop)
-	}
 
 	return nil
 }
@@ -54,12 +38,9 @@ func setup(c *caddy.Controller) error {
 func dns64Parse(c *caddyfile.Dispenser) (DNS64, error) {
 	_, defaultPref, _ := net.ParseCIDR("64:ff9b::/96")
 	dns64 := DNS64{
-		Proxy: &proxy.Proxy{
-			Upstreams: &[]proxy.Upstream{},
-		},
-		NativeUpstream: upstream.New(),
-		Prefix:         defaultPref,
-		TranslateAll:   false,
+		Upstream:     upstream.New(),
+		Prefix:       defaultPref,
+		TranslateAll: false,
 	}
 
 	for c.Next() {
@@ -79,24 +60,6 @@ func dns64Parse(c *caddyfile.Dispenser) (DNS64, error) {
 
 		for c.NextBlock() {
 			switch c.Val() {
-			case "proxy":
-				// Fake proxy arguments. Need a better solution
-				args := c.RemainingArgs()
-				fakeTokens := []caddyfile.Token{}
-				for _, arg := range args {
-					fakeTokens = append(fakeTokens, caddyfile.Token{
-						File: c.File(),
-						Line: c.Line(),
-						Text: arg,
-					})
-				}
-				fakeDispenser := caddyfile.NewDispenserTokens(c.File(), fakeTokens)
-				u, err := proxy.NewStaticUpstream(&fakeDispenser)
-
-				if err != nil {
-					return dns64, err
-				}
-				*dns64.Upstreams = append(*dns64.Upstreams, u)
 			case "prefix":
 				if !c.NextArg() {
 					return dns64, c.ArgErr()
