@@ -1,4 +1,6 @@
 // Package dns64 implements a plugin that performs DNS64.
+//
+// See: RFC 6147 (https://tools.ietf.org/html/rfc6147)
 package dns64
 
 import (
@@ -54,21 +56,21 @@ func (r *ResponseWriter) WriteMsg(res *dns.Msg) error {
 		return r.ResponseWriter.WriteMsg(res)
 	}
 
-	// Do not modify if question is not AAAA or not of class IN. See 5.1
+	// Do not modify if question is not AAAA or not of class IN. See RFC 6147 5.1
 	if state.QType() != dns.TypeAAAA || state.QClass() != dns.ClassINET {
 		return r.ResponseWriter.WriteMsg(res)
 	}
 
 	ty, _ := response.Typify(res, time.Now().UTC())
 
-	// Handle NameError normally. See 5.1.2
+	// Handle NameError normally. See RFC 6147 5.1.2
 	if ty == response.NameError {
 		return r.ResponseWriter.WriteMsg(res)
 	}
 
-	// If results in no error and has AAAA, handle normally. See 5.1.6
+	// If results in no error and has AAAA, handle normally. See RFC 6147 5.1.6
 	if ty == response.NoError {
-		// TranslateAll will disable this behaviour and translate all queries. See 5.1.1
+		// TranslateAll will disable this behaviour and translate all queries. See RFC 6147 5.1.1
 		if hasAAAA(res) && !r.TranslateAll {
 			return r.ResponseWriter.WriteMsg(res)
 		}
@@ -99,7 +101,7 @@ func (r *ResponseWriter) WriteMsg(res *dns.Msg) error {
 
 // Write implements the dns.ResponseWriter interface.
 func (r *ResponseWriter) Write(buf []byte) (int, error) {
-	log.Warning("[WARNING] DNS64 called with Write: not performing DNS64")
+	log.Warning("DNS64 called with Write: not performing DNS64")
 	n, err := r.ResponseWriter.Write(buf)
 	return n, err
 }
@@ -163,7 +165,7 @@ func hasAAAA(res *dns.Msg) bool {
 func to6(prefix *net.IPNet, addr net.IP) (net.IP, error) {
 	addr = addr.To4()
 	if addr == nil {
-		return nil, errors.New("Not a valid IPv4 address")
+		return nil, errors.New("not a valid IPv4 address")
 	}
 
 	n, _ := prefix.Mask.Size()
