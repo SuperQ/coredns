@@ -37,7 +37,7 @@ dns64 {
 
 * `prefix` specifies any local IPv6 prefix to use, instead of the well known prefix (64:ff9b::/96)
 
-## Bugs
+## TODO
 
 Not all features required by DNS64 are implemented, only basic AAAA synthesis.
 

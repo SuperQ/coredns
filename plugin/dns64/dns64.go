@@ -10,140 +10,170 @@ import (
 	"time"
 
 	"github.com/coredns/coredns/plugin"
+	"github.com/coredns/coredns/plugin/pkg/nonwriter"
 	"github.com/coredns/coredns/plugin/pkg/response"
-	"github.com/coredns/coredns/plugin/pkg/upstream"
 	"github.com/coredns/coredns/request"
 
 	"github.com/miekg/dns"
 )
+
+// UpstreamInt wraps the Upstream API for dependency injection during testing
+type UpstreamInt interface {
+	Lookup(ctx context.Context, state request.Request, name string, typ uint16) (*dns.Msg, error)
+}
 
 // DNS64 performs DNS64.
 type DNS64 struct {
 	Next         plugin.Handler
 	Prefix       *net.IPNet
 	TranslateAll bool // Not comply with 5.1.1
-	Upstream     *upstream.Upstream
+	Upstream     UpstreamInt
 }
 
 // ServeDNS implements the plugin.Handler interface.
-func (dns64 DNS64) ServeDNS(ctx context.Context, w dns.ResponseWriter, r *dns.Msg) (int, error) {
-	hijackedWriter := &ResponseWriter{w, dns64, ctx, r}
-	return dns64.Next.ServeDNS(ctx, hijackedWriter, r)
+func (d *DNS64) ServeDNS(ctx context.Context, w dns.ResponseWriter, r *dns.Msg) (int, error) {
+	// Don't proxy if we don't need to.
+	if !requestShouldIntercept(&request.Request{W: w, Req: r}) {
+		return d.Next.ServeDNS(ctx, w, r)
+	}
+
+	// Pass the request to the next plugin in the chain, but intercept the response.
+	nw := nonwriter.New(w)
+	origRc, origErr := d.Next.ServeDNS(ctx, nw, r)
+	if nw.Msg == nil { // somehow we didn't get a response (or raw bytes were written)
+		return origRc, origErr
+	}
+
+	// If the response doesn't need DNS64, short-circuit.
+	if !d.responseShouldDNS64(nw.Msg) {
+		w.WriteMsg(nw.Msg)
+		return origRc, origErr
+	}
+
+	// otherwise do the actual DNS64 request and response synthesis
+	msg, err := d.DoDNS64(ctx, w, r, nw.Msg)
+	if err != nil {
+		// err means we weren't able to even issue the A request
+		// to CoreDNS upstream
+		return dns.RcodeServerFailure, err
+	}
+
+	w.WriteMsg(msg)
+	return msg.MsgHdr.Rcode, nil
 }
 
 // Name implements the Handler interface.
-func (dns64 DNS64) Name() string { return "dns64" }
+func (d *DNS64) Name() string { return "dns64" }
 
-// ResponseWriter is a response writer that implements DNS64, when an AAAA question returns
-// NODATA, it will try and fetch any A records and synthesize the AAAA records on the fly.
-type ResponseWriter struct {
-	dns.ResponseWriter
-	DNS64
-	ctx context.Context
-	req *dns.Msg
-}
-
-// WriteMsg implements the dns.ResponseWriter interface.
-func (r *ResponseWriter) WriteMsg(res *dns.Msg) error {
-	state := request.Request{W: r, Req: res}
-
-	// Only respond with this when the request came in over IPv6. This is not mentioned in the RFC
+// shouldIntercept returns true if the request represents one that is eligible
+// for DNS64 rewriting:
+// 1. The request came in over IPv6 (not in RFC)
+// 2. The request is of type AAAA
+// 3. The request is of class INET
+func requestShouldIntercept(req *request.Request) bool {
+	// Only intercept with this when the request came in over IPv6. This is not mentioned in the RFC.
 	// File an issue if you think we should translate even requests made using IPv4, or have a configuration flag
-	if state.Family() == 1 { // If it came in over v4, don't do anything.
-		return r.ResponseWriter.WriteMsg(res)
+	if req.Family() == 1 { // If it came in over v4, don't do anything.
+		return false
 	}
 
 	// Do not modify if question is not AAAA or not of class IN. See RFC 6147 5.1
-	if state.QType() != dns.TypeAAAA || state.QClass() != dns.ClassINET {
-		return r.ResponseWriter.WriteMsg(res)
-	}
+	return req.QType() == dns.TypeAAAA && req.QClass() == dns.ClassINET
+}
 
-	ty, _ := response.Typify(res, time.Now().UTC())
+// responseShouldRewrite returns true if the response indicates we should attempt
+// DNS64 rewriting:
+// 1. The response has no valid (RFC 5.1.4) AAAA records (RFC 5.1.1)
+// 2. The response code (RCODE) is not 3 (Name Error) (RFC 5.1.2)
+//
+// Note that requestShouldIntercept must also have been true, so the request
+// is known to be of type AAAA.
+func (d *DNS64) responseShouldDNS64(origResponse *dns.Msg) bool {
+	ty, _ := response.Typify(origResponse, time.Now().UTC())
 
 	// Handle NameError normally. See RFC 6147 5.1.2
+	// All other error types are "equivalent" to empty response
 	if ty == response.NameError {
-		return r.ResponseWriter.WriteMsg(res)
+		return false
 	}
 
-	// If results in no error and has AAAA, handle normally. See RFC 6147 5.1.6
-	if ty == response.NoError {
-		// TranslateAll will disable this behaviour and translate all queries. See RFC 6147 5.1.1
-		if hasAAAA(res) && !r.TranslateAll {
-			return r.ResponseWriter.WriteMsg(res)
+	// If we've configured to always translate, well, then always translate.
+	if d.TranslateAll {
+		return true
+	}
+
+	// if response includes AAAA record, no need to rewrite
+	for _, rr := range origResponse.Answer {
+		if rr.Header().Rrtype == dns.TypeAAAA {
+			return false
 		}
 	}
+	return true
+}
 
-	// Perform Lookup
-	replacement, err := r.Upstream.Lookup(r.ctx, state, state.Name(), dns.TypeA)
+// DoDNS64 takes an (empty) response to an AAAA question, issues the A request,
+// and synthesizes the answer. Returns the response message, or error on internal failure.
+func (d *DNS64) DoDNS64(ctx context.Context, w dns.ResponseWriter, r *dns.Msg, origResponse *dns.Msg) (*dns.Msg, error) {
+	req := request.Request{W: w, Req: r} // req is unused
+	AResponse, err := d.Upstream.Lookup(ctx, req, req.Name(), dns.TypeA)
 	if err != nil {
-		return err
+		// err here indicates that CoreDNS isn't running a dns server
+		// not that the request failed.
+		return nil, err
 	}
-
-	// Modify response.
-	r.AnswerRewrite(res, replacement)
-	return r.ResponseWriter.WriteMsg(res)
+	out := d.Synthesize(r, origResponse, AResponse)
+	return out, nil
 }
 
-// Write implements the dns.ResponseWriter interface.
-func (r *ResponseWriter) Write(buf []byte) (int, error) {
-	log.Warning("DNS64 called with Write: not performing DNS64")
-	n, err := r.ResponseWriter.Write(buf)
-	return n, err
-}
+// Synthesize merges the AAAA response and the records from the A response
+func (d *DNS64) Synthesize(origReq, origResponse, AResponse *dns.Msg) *dns.Msg {
+	ret := dns.Msg{}
+	ret.SetReply(origReq)
 
-// Hijack implements the dns.ResponseWriter interface.
-func (r *ResponseWriter) Hijack() {
-	r.ResponseWriter.Hijack()
-	return
-}
+	// 5.3.2: DNS64 MUST pass the additional section unchanged
+	ret.Extra = AResponse.Extra
+	ret.Ns = AResponse.Ns
 
-// AnswerRewrite turns A responses into AAAA responses
-func (dns64 DNS64) AnswerRewrite(r *dns.Msg, replacement *dns.Msg) {
-	r.MsgHdr.Rcode = dns.RcodeSuccess
-	// Extract TTLs
-	nsTtl := uint32(600) // Default NS record TTL
-	for i := 0; i < len(r.Ns); i++ {
-		if r.Ns[i].Header().Rrtype == dns.TypeSOA {
-			nsTtl = r.Ns[i].Header().Ttl // Use specified NS record TTL
+	// 5.1.7: The TTL is the minimum of the A RR and the SOA RR. If SOA is
+	// unknown, then the TTL is the minimum of A TTL and 600
+	SOATtl := uint32(600) // Default NS record TTL
+	for _, ns := range origResponse.Ns {
+		if ns.Header().Rrtype == dns.TypeSOA {
+			SOATtl = ns.Header().Ttl
 		}
 	}
-	// Replace all our AAAA answers with A answers
-	r.Answer = replacement.Answer
-	for i := 0; i < len(r.Answer); i++ {
-		ans := r.Answer[i]
-		hdr := ans.Header()
-		// All of the answers should be A answers. Ensure that
-		if hdr.Rrtype == dns.TypeA {
-			aaaa, _ := to6(dns64.Prefix, ans.(*dns.A).A)
-			ttl := nsTtl
-			// Limit the TTL to the NS record TTL
-			if ans.Header().Ttl < ttl {
-				ttl = ans.Header().Ttl
-			}
-			// Replace A answer with a DNS64 AAAA answer
-			r.Answer[i] = &dns.AAAA{
-				Hdr: dns.RR_Header{
-					Name:   hdr.Name,
-					Rrtype: dns.TypeAAAA,
-					Class:  hdr.Class,
-					Ttl:    ttl,
-				},
-				AAAA: aaaa,
-			}
-		}
-	}
-	// TODO: Explain this
-	r.Ns = []dns.RR{}
-}
 
-// hasAAAA checks if AAAA records exists in dns.Msg
-func hasAAAA(res *dns.Msg) bool {
-	for _, a := range res.Answer {
-		if a.Header().Rrtype == dns.TypeAAAA {
-			return true
+	ret.Answer = make([]dns.RR, 0, len(AResponse.Answer))
+	// convert A records to AAAA records
+	for _, rr := range AResponse.Answer {
+		header := rr.Header()
+		// 5.3.3: All other RR's MUST be returned unchanged
+		if header.Rrtype != dns.TypeA {
+			ret.Answer = append(ret.Answer, rr)
+			continue
 		}
+
+		//convert v4 to v6
+		aaaa, _ := to6(d.Prefix, rr.(*dns.A).A)
+
+		// ttl is min of SOA TTL and A TTL
+		ttl := SOATtl
+		if rr.Header().Ttl < ttl {
+			ttl = rr.Header().Ttl
+		}
+
+		// Replace A answer with a DNS64 AAAA answer
+		ret.Answer = append(ret.Answer, &dns.AAAA{
+			Hdr: dns.RR_Header{
+				Name:   header.Name,
+				Rrtype: dns.TypeAAAA,
+				Class:  header.Class,
+				Ttl:    ttl,
+			},
+			AAAA: aaaa,
+		})
 	}
-	return false
+	return &ret
 }
 
 // to6 takes a prefix and IPv4 address and returns an IPv6 address according to RFC 6052.

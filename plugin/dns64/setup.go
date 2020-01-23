@@ -35,9 +35,9 @@ func setup(c *caddy.Controller) error {
 	return nil
 }
 
-func dns64Parse(c *caddyfile.Dispenser) (DNS64, error) {
+func dns64Parse(c *caddyfile.Dispenser) (*DNS64, error) {
 	_, defaultPref, _ := net.ParseCIDR("64:ff9b::/96")
-	dns64 := DNS64{
+	dns64 := &DNS64{
 		Upstream:     upstream.New(),
 		Prefix:       defaultPref,
 		TranslateAll: false,
@@ -49,31 +49,31 @@ func dns64Parse(c *caddyfile.Dispenser) (DNS64, error) {
 			pref, err := parsePrefix(c, args[0])
 
 			if err != nil {
-				return dns64, err
+				return nil, err
 			}
 			dns64.Prefix = pref
 			continue
 		}
 		if len(args) > 0 {
-			return dns64, c.ArgErr()
+			return nil, c.ArgErr()
 		}
 
 		for c.NextBlock() {
 			switch c.Val() {
 			case "prefix":
 				if !c.NextArg() {
-					return dns64, c.ArgErr()
+					return nil, c.ArgErr()
 				}
 				pref, err := parsePrefix(c, c.Val())
 
 				if err != nil {
-					return dns64, err
+					return nil, err
 				}
 				dns64.Prefix = pref
 			case "translateAll":
 				dns64.TranslateAll = true
 			default:
-				return dns64, c.Errf("unknown property '%s'", c.Val())
+				return nil, c.Errf("unknown property '%s'", c.Val())
 			}
 		}
 	}
